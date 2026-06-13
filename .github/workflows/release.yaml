@@ -134,6 +134,9 @@ jobs:
           allow_no_diff: false
 
   helm-release:
+    # Publishing to jetstack/jetstack-charts is upstream-only (needs JETSTACK_CHARTS_PAT).
+    # Skip on forks so a tag push doesn't fail the release.
+    if: github.repository == 'jetstack/version-checker'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -203,6 +206,8 @@ jobs:
   docker-release:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
+      packages: write
       id-token: write
     needs:
       - release-name
@@ -225,12 +230,16 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
 
-      - name: Login to Docker Hub
+      - name: Compute image name (GHCR, lowercase owner/repo)
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
         uses: docker/login-action@v4
         with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push (if applicable)
         id: build-and-push
@@ -240,7 +249,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           pull: true
-          tags: quay.io/jetstack/version-checker:${{github.ref_name}}
+          tags: ${{ steps.image.outputs.name }}:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           attests: |-
@@ -251,10 +260,10 @@ jobs:
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         env:
           # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-          TAGS: quay.io/jetstack/version-checker:${{github.ref_name}}
+          TAGS: ${{ steps.image.outputs.name }}:${{ github.ref_name }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: |-
-          cosign sign --yes "quay.io/jetstack/version-checker:${{github.ref_name}}@${DIGEST}"
+          cosign sign --yes "${TAGS}@${DIGEST}"
 
   github-release:
     name: Create/Update GitHub Release
